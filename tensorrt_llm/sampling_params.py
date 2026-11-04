@@ -419,6 +419,14 @@ class SamplingParams:
                 f"require top_p_reset_ids >= 0, got top_p_reset_ids={self.top_p_reset_ids}"
             )
 
+        # An empty stop string tokenizes to an empty token sequence, which the
+        # sampler rejects inside the batched sampling step, failing every
+        # active request. As a text-level stop it would also match at position
+        # 0 of any output.
+        stops = [self.stop] if isinstance(self.stop, str) else self.stop
+        if stops and any(isinstance(stop, str) and not stop for stop in stops):
+            raise ValueError("stop must not contain an empty string")
+
         if self.best_of is not None and self.best_of < self.n:
             raise ValueError(f"best_of ({self.best_of}) cannot be less than n ({self.n})")
 
@@ -603,6 +611,9 @@ class SamplingParams:
         if self.stop is not None:
             strs = [self.stop] if isinstance(self.stop, str) else self.stop
             self._stop_word_ids = [_encode(tokenizer, s, add_special_tokens) for s in strs]
+            for text, token_ids in zip(strs, self._stop_word_ids):
+                if not token_ids:
+                    raise ValueError(f"stop string {text!r} does not encode to any token")
 
         # Add eos_token_id in generation_config to stop_token_ids
         # The eos_token_id in generation_config are really mean to stop the text generation.

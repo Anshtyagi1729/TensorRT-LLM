@@ -552,3 +552,34 @@ def test_thinking_budget_text_generation_caps_reasoning_tokens(thinking_token_bu
     assert tokenizer.decode(generated_ids) == tokenizer.decode(
         [start_id, *expected_reasoning_ids, end_id, answer_id]
     )
+
+
+@pytest.mark.parametrize("value", ["", [""], ["foo", ""]])
+def test_sampling_params_rejects_empty_stop_strings(value):
+    with pytest.raises(ValueError, match="stop must not contain an empty string"):
+        SamplingParams(stop=value)
+
+
+def test_sampling_params_rejects_stop_string_that_encodes_to_no_tokens():
+    class _DroppingTokenizer:
+        eos_token_id = 0
+        pad_token_id = None
+
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return [1] if text == "kept" else []
+
+    sampling_params = SamplingParams(stop=["kept", "dropped"])
+    with pytest.raises(ValueError, match="stop string 'dropped' does not encode"):
+        sampling_params._setup(_DroppingTokenizer(), None, None)
+
+
+def test_sampling_params_keeps_ignoring_empty_bad_strings():
+    # The sampler skips empty bad words, so an empty bad string stays accepted.
+    assert SamplingParams(bad=[""]).bad == [""]
+
+
+def test_completion_request_rejects_empty_stop_string():
+    request = CompletionRequest(model="m", prompt="hi", stop=["</s>", ""])
+    with pytest.raises(ValueError, match="stop must not contain an empty string"):
+        request.to_sampling_params(backend="pytorch")
