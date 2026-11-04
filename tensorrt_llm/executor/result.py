@@ -1051,6 +1051,12 @@ class DetokenizedGenerationResultBase(GenerationResultBase):
         # ``detokenize=False``.
         if (self.sampling_params.detokenize or self._post_processor_hook
                 is not None) and self.tokenizer is not None:
+            # A stop string matched in the text below ends the result before
+            # the engine has finished the request whenever the engine did not
+            # match it by token ids (e.g. stop "\n" generated as a "\n\n"
+            # token). The engine request is then cancelled so it does not keep
+            # generating up to max_tokens for output no one reads.
+            engine_finished = self._done
             for beam_output in self.outputs:
                 beam_output._last_text_len = len(beam_output.text)
                 if hasattr(
@@ -1090,7 +1096,26 @@ class DetokenizedGenerationResultBase(GenerationResultBase):
                             self._done = True
                             break
 
+            if self._done and not engine_finished:
+                self._cancel_after_text_stop()
+
             self._apply_post_processor_hook()
+
+    def _cancel_after_text_stop(self) -> None:
+        """Cancel the engine request after a text-level stop ended the result.
+
+        ``abort`` cancels on the executor when this result has one; on a
+        postprocess worker it only sets the aborted flag, which the worker
+        forwards as ``should_abort`` so the proxy-side result cancels instead.
+        """
+        if self._aborted:
+            return
+        try:
+            self.abort()
+        except Exception:
+            logger.exception(
+                "Failed to cancel request %s after it matched a stop string",
+                self.id)
 
     def _apply_post_processor_hook(self):
         """Run the user post-processing hook at the detok chokepoint.
